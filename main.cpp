@@ -1,4 +1,8 @@
 #include <bits/stdc++.h>
+#include <ext/pb_ds/assoc_container.hpp>
+#include <ext/pb_ds/tree_policy.hpp>
+using namespace __gnu_pbds;
+
 using namespace std;
 
 struct Submission { int prob; string status; int time; long long seq; };
@@ -81,7 +85,7 @@ struct SystemState {
 
     unordered_map<string, unique_ptr<Team>> teamsByName;
     vector<Team*> teamsVec; // storage for ordering
-    set<Team*, CmpTeam> ranking; // current visible ranking order
+    tree<Team*, null_type, CmpTeam, rb_tree_tag, tree_order_statistics_node_update> ranking; // order-statistics tree for visible ranking
 
     // For last flushed ranking mapping
     vector<Team*> last_order; // from best to worst
@@ -174,7 +178,7 @@ struct SystemState {
         }
         // Build last_order and last_rank_of
         last_order.clear(); last_rank_of.clear();
-        for (auto *t : ranking) last_order.push_back(t);
+        for (int i = 0; i < (int)ranking.size(); ++i) last_order.push_back(*ranking.find_by_order(i));
         for (int i = 0; i < (int)last_order.size(); ++i) last_rank_of[last_order[i]->name] = i + 1;
         cout << "[Info]Flush scoreboard.\n";
     }
@@ -229,8 +233,9 @@ struct SystemState {
         cout << "\n";
     }
 
-    void printScoreboard(const set<Team*, CmpTeam>& order, const unordered_map<string,int>& rankmap) const {
-        for (auto *t : order) printTeamRow(t, rankmap);
+    template<typename ItContainer>
+    void printScoreboardAny(const ItContainer& orderContainer, const unordered_map<string,int>& rankmap) const {
+        for (auto *t : orderContainer) printTeamRow(t, rankmap);
     }
 
     void scrollScoreboard() {
@@ -251,27 +256,27 @@ struct SystemState {
             ranking.insert(t);
         }
         last_order.clear(); last_rank_of.clear();
-        for (auto *t : ranking) last_order.push_back(t);
+        for (int i = 0; i < (int)ranking.size(); ++i) last_order.push_back(*ranking.find_by_order(i));
         for (int i = 0; i < (int)last_order.size(); ++i) last_rank_of[last_order[i]->name] = i + 1;
         // Print scoreboard BEFORE scrolling
-        printScoreboard(ranking, last_rank_of);
+        printScoreboardAny(last_order, last_rank_of);
 
         // Process reveals until no team has frozen problems (y>0)
         // We'll repeatedly pick the lowest-ranked such team in current ranking
         while (true) {
             Team* chosen = nullptr; int chosenRank = -1;
-            // scan from worst to best
-            for (auto it = ranking.rbegin(); it != ranking.rend(); ++it) {
-                Team* cand = *it;
-                bool has = false; int minP = 26;
+            // scan from worst to best using order statistics
+            for (int idx = (int)ranking.size() - 1; idx >= 0; --idx) {
+                Team* cand = *ranking.find_by_order(idx);
+                bool has = false;
                 for (int p = 0; p < problem_count; ++p) {
                     const auto &pr = cand->ps[p];
                     if (pr.eligibleFreeze) {
                         int y = (int)pr.subs.size() - pr.freezeStartIdx;
-                        if (y > 0) { has = true; minP = min(minP, p); }
+                        if (y > 0) { has = true; break; }
                     }
                 }
-                if (has) { chosen = cand; chosenRank = distance(ranking.begin(), ranking.find(cand)) + 1; break; }
+                if (has) { chosen = cand; chosenRank = idx + 1; break; }
             }
             if (!chosen) break; // no frozen problems remaining
 
@@ -313,16 +318,24 @@ struct SystemState {
 
             // Reinsert and compute new rank
             ranking.insert(chosen);
-            int newRank = (int)distance(ranking.begin(), ranking.find(chosen)) + 1;
+            int newRank = (int)ranking.order_of_key(chosen) + 1;
             if (newRank < oldRank) {
-                // Print ranking change line
-                // team2 = team that was at position newRank BEFORE the increase
+                // Print ranking change line: team2 is team at newRank BEFORE increase
                 Team* team2 = last_order[newRank - 1];
                 cout << chosen->name << ' ' << team2->name << ' ' << chosen->vis_solved << ' ' << chosen->vis_penalty << "\n";
+                // Update last_order by moving chosen to position newRank-1
+                // First, erase chosen from its old position in last_order
+                int oldPos = oldRank - 1;
+                // Find actual index of chosen in last_order in case ordering changed slightly
+                for (int i = 0; i < (int)last_order.size(); ++i) if (last_order[i] == chosen) { oldPos = i; break; }
+                if (oldPos < newRank - 1) {
+                    rotate(last_order.begin() + oldPos, last_order.begin() + oldPos + 1, last_order.begin() + newRank);
+                } else if (oldPos > newRank - 1) {
+                    rotate(last_order.begin() + newRank - 1, last_order.begin() + oldPos, last_order.begin() + oldPos + 1);
+                }
             }
-            // Update last_order to current order for next iteration selection
-            last_order.clear(); last_rank_of.clear();
-            for (auto *t : ranking) last_order.push_back(t);
+            // Update last_rank_of map
+            last_rank_of.clear();
             for (int i = 0; i < (int)last_order.size(); ++i) last_rank_of[last_order[i]->name] = i + 1;
         }
 
@@ -332,7 +345,7 @@ struct SystemState {
             for (int p = 0; p < problem_count; ++p) t->ps[p].eligibleFreeze = false; // reset
         }
         // Print scoreboard AFTER scrolling
-        printScoreboard(ranking, last_rank_of);
+        printScoreboardAny(last_order, last_rank_of);
     }
 
     void queryRanking(const string &teamName) {
