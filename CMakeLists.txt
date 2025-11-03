@@ -13,6 +13,6 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  target_compile_options(code PRIVATE -O2 -pipe -static-libstdc++ -static-libgcc)
+  target_compile_options(code PRIVATE -O3 -pipe -march=native -mtune=native -fno-exceptions -fno-rtti -static-libstdc++ -static-libgcc)
 endif()
 

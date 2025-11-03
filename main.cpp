@@ -84,6 +84,10 @@ struct SystemState {
     long long seq = 0; // submission sequence counter
 
     unordered_map<string, unique_ptr<Team>> teamsByName;
+    // Maintain a fast lookup for lowest-ranked team having frozen problems
+    tree<pair<int,int>, null_type, less<pair<int,int>>, rb_tree_tag, tree_order_statistics_node_update> frozenTeams; // (rankIndex, teamId)
+    vector<int> rankIndex; // current rank index (1-based) for each team id, updated on flush/scroll
+
     vector<Team*> teamsVec; // storage for ordering
     tree<Team*, null_type, CmpTeam, rb_tree_tag, tree_order_statistics_node_update> ranking; // order-statistics tree for visible ranking
 
@@ -102,6 +106,7 @@ struct SystemState {
         if (teamsByName.count(name)) { cout << "[Error]Add failed: duplicated team name.\n"; return; }
         auto t = make_unique<Team>();
         t->name = name; t->id = (int)teamsByName.size();
+
         t->problem_count = problem_count > 0 ? problem_count : 26; // default capacity
         t->ps.assign(26, ProblemState());
         t->vis_solved = 0; t->vis_penalty = 0; t->vis_times_desc.clear();
@@ -119,6 +124,14 @@ struct SystemState {
         for (auto *t : teamsVec) t->problem_count = problem_count;
         cout << "[Info]Competition starts.\n";
     }
+    void updateRankIndexFromRanking() {
+        rankIndex.assign(teamsVec.size(), 0);
+        for (int i = 0; i < (int)ranking.size(); ++i) {
+            Team* t = *ranking.find_by_order(i);
+            rankIndex[t->id] = i + 1;
+        }
+    }
+
 
     static bool isWrong(const string &st) { return st != "Accepted"; }
 
@@ -262,10 +275,9 @@ struct SystemState {
         printScoreboardAny(last_order, last_rank_of);
 
         // Process reveals until no team has frozen problems (y>0)
-        // We'll repeatedly pick the lowest-ranked such team in current ranking
+        // We'll repeatedly scan from worst to best using order statistics
         while (true) {
             Team* chosen = nullptr; int chosenRank = -1;
-            // scan from worst to best using order statistics
             for (int idx = (int)ranking.size() - 1; idx >= 0; --idx) {
                 Team* cand = *ranking.find_by_order(idx);
                 bool has = false;
@@ -324,9 +336,7 @@ struct SystemState {
                 Team* team2 = last_order[newRank - 1];
                 cout << chosen->name << ' ' << team2->name << ' ' << chosen->vis_solved << ' ' << chosen->vis_penalty << "\n";
                 // Update last_order by moving chosen to position newRank-1
-                // First, erase chosen from its old position in last_order
                 int oldPos = oldRank - 1;
-                // Find actual index of chosen in last_order in case ordering changed slightly
                 for (int i = 0; i < (int)last_order.size(); ++i) if (last_order[i] == chosen) { oldPos = i; break; }
                 if (oldPos < newRank - 1) {
                     rotate(last_order.begin() + oldPos, last_order.begin() + oldPos + 1, last_order.begin() + newRank);
